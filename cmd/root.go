@@ -1,43 +1,24 @@
-// Copyright © 2018 NAME HERE <EMAIL ADDRESS>
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package cmd
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha512"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"os"
 
-	homedir "github.com/mitchellh/go-homedir"
+	"github.com/conradludgate/pass/pass"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
-
-var cfgFile string
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "pass",
-	Short: "A brief description of your application",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
+	Short: "Phone authenticated password manager",
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	//	Run: func(cmd *cobra.Command, args []string) { },
+	Run: pair,
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -49,41 +30,91 @@ func Execute() {
 	}
 }
 
-func init() {
-	cobra.OnInitialize(initConfig)
+func pair(cmd *cobra.Command, args []string) {
+	fmt.Println("Pairing...")
 
-	// Here you will define your flags and configuration settings.
-	// Cobra supports persistent flags, which, if defined here,
-	// will be global for your application.
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.pass.yaml)")
-
-	// Cobra also supports local flags, which will only run
-	// when this action is called directly.
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
-}
-
-// initConfig reads in config file and ENV variables if set.
-func initConfig() {
-	if cfgFile != "" {
-		// Use config file from the flag.
-		viper.SetConfigFile(cfgFile)
-	} else {
-		// Find home directory.
-		home, err := homedir.Dir()
+	file, err := os.OpenFile(os.Getenv("PASS_KEY_FILE"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		file, err = os.OpenFile(".pass.key", os.O_CREATE|os.O_RDWR, 0600)
 		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
+			fmt.Println("Cannot open file. Reason:", err.Error())
+			return
 		}
+	}
+	defer file.Close()
 
-		// Search config in home directory with name ".pass" (without extension).
-		viper.AddConfigPath(home)
-		viper.SetConfigName(".pass")
+	var priv *rsa.PrivateKey
+
+	// Try to read file
+	b, err := ioutil.ReadAll(file)
+	if err == nil {
+		// If read is successful, try to parse PrivateKey as JSON
+		priv = &rsa.PrivateKey{}
+
+		if json.Unmarshal(b, priv) != nil ||
+			priv.Validate() != nil {
+			// If error parsing JSON, or the key is invalid, reject key
+			priv = nil
+		}
 	}
 
-	viper.AutomaticEnv() // read in environment variables that match
+	// Open checksum file
+	chksumf, err := os.OpenFile(file.Name()+".sum", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		fmt.Println("Cannot open Checksum file.", err.Error())
+		return
+	}
 
-	// If a config file is found, read it in.
-	if err := viper.ReadInConfig(); err == nil {
-		fmt.Println("Using config file:", viper.ConfigFileUsed())
+	if priv != nil {
+		sum1 := sha512.Sum512(b)
+		sum2, err := ioutil.ReadAll(chksumf)
+		// If the checksum can't be read, reject key
+		if err != nil || len(sum2) != sha512.Size {
+			priv = nil
+		}
+
+		// If checksum isn't equal, reject key
+		for i, v := range sum2 {
+			if sum1[i] != v {
+				priv = nil
+				break
+			}
+		}
+	}
+
+	// If key is invalid, remake
+	if priv == nil {
+		// Create new key
+		priv, err = rsa.GenerateKey(rand.Reader, 4096)
+		if err != nil {
+			fmt.Println("Error generating key.", err.Error())
+			return
+		}
+
+		// Format key
+		b, err = json.Marshal(priv)
+		if err != nil {
+			fmt.Println("Error formatting private key.", err.Error())
+			return
+		}
+
+		// Calculate checksum
+		sum := sha512.Sum512(b)
+
+		// Write key and checksum to files
+		if _, err = file.Write(b); err != nil {
+			fmt.Println("Error writing to key file.", err.Error())
+			return
+		}
+		if _, err = chksumf.Write(sum[:]); err != nil {
+			fmt.Println("Error writing to checksum file.", err.Error())
+			return
+		}
+	}
+
+	// Pair
+	err = pass.Pair(priv)
+	if err != nil {
+		panic(err)
 	}
 }
