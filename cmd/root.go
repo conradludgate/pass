@@ -2,15 +2,18 @@ package cmd
 
 import (
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha512"
-	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"net/url"
 	"os"
 
-	"github.com/conradludgate/pass/pass"
+	"github.com/conradludgate/pass/libpass"
+
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ed25519"
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -43,78 +46,72 @@ func pair(cmd *cobra.Command, args []string) {
 	}
 	defer file.Close()
 
-	var priv *rsa.PrivateKey
-
-	// Try to read file
-	b, err := ioutil.ReadAll(file)
-	if err == nil {
-		// If read is successful, try to parse PrivateKey as JSON
-		priv = &rsa.PrivateKey{}
-
-		if json.Unmarshal(b, priv) != nil ||
-			priv.Validate() != nil {
-			// If error parsing JSON, or the key is invalid, reject key
-			priv = nil
-		}
-	}
-
-	// Open checksum file
-	chksumf, err := os.OpenFile(file.Name()+".sum", os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		fmt.Println("Cannot open Checksum file.", err.Error())
-		return
-	}
-
-	if priv != nil {
-		sum1 := sha512.Sum512(b)
-		sum2, err := ioutil.ReadAll(chksumf)
-		// If the checksum can't be read, reject key
-		if err != nil || len(sum2) != sha512.Size {
-			priv = nil
-		}
-
-		// If checksum isn't equal, reject key
-		for i, v := range sum2 {
-			if sum1[i] != v {
-				priv = nil
-				break
-			}
-		}
-	}
+	key, sum, err := ReadKey(file)
 
 	// If key is invalid, remake
-	if priv == nil {
+	if err != nil {
+		fmt.Println(err)
 		// Create new key
-		priv, err = rsa.GenerateKey(rand.Reader, 4096)
+		_, sec, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			fmt.Println("Error generating key.", err.Error())
 			return
 		}
 
-		// Format key
-		b, err = json.Marshal(priv)
-		if err != nil {
-			fmt.Println("Error formatting private key.", err.Error())
-			return
-		}
-
 		// Calculate checksum
-		sum := sha512.Sum512(b)
+		sum = sha512.Sum512(sec)
 
 		// Write key and checksum to files
-		if _, err = file.Write(b); err != nil {
-			fmt.Println("Error writing to key file.", err.Error())
+
+		file.Truncate(0)
+		file.Seek(0, 0)
+
+		if _, err = file.Write(append(sec, sum[:]...)); err != nil {
+			fmt.Println("Error writing to file.", err.Error())
 			return
 		}
-		if _, err = chksumf.Write(sum[:]); err != nil {
-			fmt.Println("Error writing to checksum file.", err.Error())
-			return
+
+		copy(key[:], sec)
+	}
+
+	server := os.Getenv("PASS_SERVER")
+	if server != nil {
+		u, err := url.Parse(server)
+		if err != nil {
+			pass.PASS_SERVER = u
 		}
 	}
 
 	// Pair
-	err = pass.Pair(priv)
+	err = pass.Pair(key)
 	if err != nil {
 		panic(err)
 	}
+}
+
+func ReadKey(r io.Reader) (key, sum [64]byte, err error) {
+	b, err := ioutil.ReadAll(r)
+	if err != nil {
+		return
+	}
+
+	fmt.Println(len(b))
+
+	if len(b) != 128 {
+		return key, sum, errors.New("File must contain only 128 bytes")
+	}
+
+	copy(key[:], b)
+	copy(sum[:], b[64:])
+
+	sum = sha512.Sum512(b[:64])
+	for i, v := range sum {
+		if b[64+i] != v {
+			return key, sum, errors.New("Bad checksum")
+		}
+	}
+
+	copy(key[:], b[:64])
+	copy(sum[:], b[64:])
+	return
 }
