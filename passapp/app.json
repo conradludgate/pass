@@ -1,5 +1,9 @@
 {
-  "expo": {
-    "sdkVersion": "27.0.0"
-  }
+	"expo": {
+		"name": "Pass",
+		"description": "A phone based password manager and authenticator",
+		"slug": "passapp",
+		"sdkVersion": "27.0.0",
+		"githubUrl": "https://github.com/conradludgate/pass"
+	}
 }

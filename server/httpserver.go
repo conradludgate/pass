@@ -18,9 +18,10 @@ func main() {
 var clients map[[64]byte](chan []byte)
 
 func WaitHandle(w http.ResponseWriter, r *http.Request) {
-	b, err := ioutil.ReadAll(r)
+	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
+		return
 	}
 
 	// 32 Bytes for client ed25519    pubkey
@@ -29,9 +30,12 @@ func WaitHandle(w http.ResponseWriter, r *http.Request) {
 	if len(b) != 128 {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("Body must have size 128"))
+		return
 	}
 
-	_, ok := clients[b[:64]]
+	var index [64]byte
+	copy(index[:], b)
+	_, ok := clients[index]
 	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("Request already made"))
@@ -47,10 +51,10 @@ func WaitHandle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	c := make(chan []byte)
-	clients[b[:64]] = c
+	clients[index] = c
 
 	defer func() {
-		delete(clients, b[:64])
+		delete(clients, index)
 	}()
 
 	w.Write(<-c)
@@ -58,9 +62,10 @@ func WaitHandle(w http.ResponseWriter, r *http.Request) {
 }
 
 func PairHandle(w http.ResponseWriter, r *http.Request) {
-	b, err := ioutil.ReadAll(r)
+	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
+		return
 	}
 
 	// 32 Bytes for client ed25519    pubkey
@@ -71,12 +76,17 @@ func PairHandle(w http.ResponseWriter, r *http.Request) {
 	if len(b) != 192 {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("Body must have size 192"))
+		return
 	}
 
 	var client [64]byte
 	copy(client[:], b[:64])
 
 	c, ok := clients[client]
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 
 	if !ed25519.Verify(ed25519.PublicKey(b[64:96]), b[:128], b[128:]) {
 		w.WriteHeader(http.StatusBadRequest)
