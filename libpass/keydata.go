@@ -3,94 +3,120 @@ package libpass
 import (
 	"crypto/rand"
 	"crypto/sha512"
+	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"os"
 
-	"github.com/vmihailenco/msgpack"
-	"golang.org/x/crypto/ed25519"
+	//"github.com/vmihailenco/msgpack"
+	msgpack "encoding/json"
+
+	"golang.org/x/crypto/curve25519"
+	"golang.org/x/crypto/nacl/box"
+	"golang.org/x/crypto/nacl/sign"
 )
 
-type KeyData struct {
-	PrivateKey [32]byte
-	PublicKey  [32]byte
-
-	PhoneEdKey    [32]byte
-	PhoneCurveKey [32]byte
-
-	CheckSum [64]byte
+type Keys struct {
+	SignPriv *[64]byte
+	SignPub  *[32]byte
+	BoxPriv  *[32]byte
+	BoxPub   *[32]byte
 }
 
-func GetKeyFromFile(file *os.File) (key KeyData, err error) {
-	key, err = ReadKeyData(file)
-
-	// If key is invalid, remake
-	if err != nil || !key.Verify() {
-		// Create new key
-		key, err = GenerateKeyData()
-		if err != nil {
-			return key, fmt.Errorf("Error generating key. %s", err.Error())
-		}
-
-		// Write keydata to file
-		file.Truncate(0)
-		file.Seek(0, 0)
-
-		err = key.WriteKeyData(file)
-		if err != nil {
-			return key, fmt.Errorf("Error writing to file. %s", err.Error())
-		}
-	}
-
-	return
-}
-
-func GenerateKeyData() (key KeyData, err error) {
-	_, sec, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return key, err
-	}
-
-	copy(key.PrivateKey[:], sec)
-	copy(key.PublicKey[:], sec[32:])
-
-	return
-}
-
-func ReadKeyData(r io.Reader) (key KeyData, err error) {
-	// Read contents of file
-	b, err := ioutil.ReadAll(r)
-	if err != nil {
+func (k *Keys) Generate() (err error) {
+	if k == nil {
 		return
 	}
 
-	err = msgpack.Unmarshal(b, &key)
+	if k.SignPriv == nil {
+		k.SignPub, k.SignPriv, err = sign.GenerateKey(rand.Reader)
+		if err != nil {
+			return
+		}
+	}
+
+	if k.SignPub == nil {
+		k.SignPub = new([32]byte)
+		copy((*k.SignPub)[:], (*k.SignPriv)[32:])
+	}
+
+	if k.BoxPriv == nil {
+		k.BoxPub, k.BoxPriv, err = box.GenerateKey(rand.Reader)
+		if err != nil {
+			return
+		}
+	}
+
+	if k.BoxPub == nil {
+		curve25519.ScalarBaseMult(k.BoxPub, k.BoxPriv)
+	}
+
+	return nil
+}
+
+type KeyFile struct {
+	Client, Phone *Keys
+	file          *os.File
+}
+
+func NewKeyFile(file *os.File) (kf KeyFile, err error) {
+	kf.file = file
+	kf.Client = new(Keys)
+	kf.Phone = new(Keys)
+
+	err = kf.Load()
+
+	// If key is invalid, remake
+	if err != nil {
+		// Create new key
+
+		err = kf.Client.Generate()
+		if err != nil {
+			return kf, fmt.Errorf("Error generating key. %s", err.Error())
+		}
+
+		// Write KeyFile to file
+		file.Truncate(0)
+		file.Seek(0, 0)
+
+		err = kf.Save()
+		if err != nil {
+			return kf, fmt.Errorf("Error writing to file. %s", err.Error())
+		}
+	}
 
 	return
 }
 
-func (k KeyData) CalculateSum() [64]byte {
-	b := make([]byte, 256)
-	copy(b[:], k.PrivateKey[:])
-	copy(b[32:], k.PublicKey[:])
-	copy(b[64:], k.PhoneEdKey[:])
-	copy(b[128:], k.PhoneCurveKey[:])
-
-	return sha512.Sum512(b)
-}
-
-func (k KeyData) Verify() bool {
-	return k.CheckSum == k.CalculateSum()
-}
-
-func (k KeyData) WriteKeyData(w io.Writer) error {
-	k.CheckSum = k.CalculateSum()
-	b, err := msgpack.Marshal(k)
+func (kf KeyFile) Load() error {
+	// Read contents of file
+	b, err := ioutil.ReadAll(kf.file)
 	if err != nil {
 		return err
 	}
 
-	_, err = w.Write(b)
+	if len(b) < 64 {
+		return errors.New("Bad file format")
+	}
+
+	var checksum [64]byte
+	copy(checksum[:], b[:64])
+	if sum := sha512.Sum512(b[64:]); sum != checksum {
+		return errors.New("Could not verify file integrity")
+	}
+
+	return msgpack.Unmarshal(b[64:], &kf)
+}
+
+func (kf KeyFile) Save() error {
+	b, err := msgpack.Marshal(kf)
+	if err != nil {
+		return err
+	}
+
+	sum := sha512.Sum512(b)
+	b = append(sum[:], b...)
+
+	_, err = kf.file.Write(b)
 	return err
 }

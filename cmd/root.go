@@ -27,7 +27,6 @@ func Execute() {
 }
 
 func pair(cmd *cobra.Command, args []string) {
-	fmt.Println("Pairing...")
 
 	file, err := os.OpenFile(os.Getenv("PASS_KEY_FILE"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
@@ -39,22 +38,23 @@ func pair(cmd *cobra.Command, args []string) {
 	}
 	defer file.Close()
 
-	key, err := libpass.GetKeyFromFile(file)
+	key, err := libpass.NewKeyFile(file)
 	if err != nil {
 		fmt.Println(err.Error())
 		return
 	}
 
 	server := os.Getenv("PASS_SERVER")
+	u := libpass.DefaultServer
 	if server != "" {
-		u, err := url.Parse(server)
+		u, err = url.Parse(server)
 		if err != nil {
-			libpass.PASS_SERVER = u
+			u = libpass.DefaultServer
 		}
 	}
 
 	// Pair
-	err = libpass.Pair(key, file)
+	err = libpass.Pair(key, *u)
 	if err != nil {
 		fmt.Println("Error occured while pairing.", err.Error())
 	}
