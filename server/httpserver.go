@@ -55,6 +55,9 @@ func WaitHandle(w http.ResponseWriter, r *http.Request) {
 	if dur <= 0 {
 		dur = 60
 	}
+	if dur > 60 {
+		dur = 60
+	}
 
 	timeout := time.After(time.Second * time.Duration(dur))
 
@@ -62,9 +65,9 @@ func WaitHandle(w http.ResponseWriter, r *http.Request) {
 		select {
 
 		// Check if a message is available
-		case b = <-c:
+		case data := <-c:
 			// Send message and close the connection
-			conn.WriteMessage(t, b)
+			conn.WriteMessage(t, data)
 			return
 
 		case <-timeout:
@@ -81,15 +84,15 @@ func WaitHandle(w http.ResponseWriter, r *http.Request) {
 }
 
 func getIndex(b []byte) (index [64]byte, err error) {
+	// 64 Bytes for signature
 	// 32 Bytes for client sign pubkey
 	// 32 Bytes for client box  pubkey
-	// 64 Bytes for signature
 	if len(b) != 128 {
 		err = errors.New("Body must have size 128")
 		return
 	}
 
-	copy(index[:], b)
+	copy(index[:], b[64:])
 	_, ok := clients[index]
 	if ok {
 		err = errors.New("Request already made")
@@ -117,11 +120,11 @@ func PairHandle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 64 Bytes for signature
 	// 32 Bytes for client sign pubkey
 	// 32 Bytes for client box  pubkey
 	// 32 Bytes for phone  sign pubkey
 	// 32 Bytes for phone  box  pubkey
-	// 64 Bytes for signature
 	if len(b) != 192 {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("Body must have size 192"))
@@ -129,7 +132,7 @@ func PairHandle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var client [64]byte
-	copy(client[:], b[:64])
+	copy(client[:], b[64:])
 
 	c, ok := clients[client]
 	if !ok {
@@ -138,7 +141,7 @@ func PairHandle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var pub [32]byte
-	copy(pub[:], b[64:])
+	copy(pub[:], b[128:])
 
 	if _, verify := sign.Open(nil, b, &pub); !verify {
 		w.WriteHeader(http.StatusBadRequest)

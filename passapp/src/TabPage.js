@@ -1,67 +1,50 @@
 import React from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View, Button } from "react-native";
 
 import { BarCodeScanner, Permissions } from "expo";
 
 import { Buffer } from "buffer";
 import nacl from "tweetnacl";
 
+import QRScanner from "./QRScanner"
+
 export default class TabPage extends React.Component {
 	state = {
-		hasCameraPermission: null,
-		value: "",
+		scan: false,
 	};
 
-	async componentWillMount() {
-		const { status } = await Permissions.askAsync(Permissions.CAMERA);
-		this.setState({ hasCameraPermission: status === "granted" });
+	_onPress = () => {
+		this.setState({scan:true})
+	}
+
+	_onFind = ({ clientSign, clientBox }) => {
+		this.setState({scan:false});
+
+		alert("sign: " + clientSign.toString("base64") + ", box: " + clientBox.toString("base64"))
+	};
+
+	_onExit = (error) => {
+		this.setState({scan:false});
+
+		if (!!error) alert(error);
 	}
 
 	render() {
 		if (this.props.page === "1") {
-			return <Text>Devices Page</Text>;
+			if (this.state.scan) {
+				return (<QRScanner
+					onFind={this._onFind}
+					onExit={this._onExit}
+				/>);
+			} else {
+				return (<Button 
+					onPress={this._onPress}
+					title="Scan"
+				/>);
+			}
+
 		} else if (this.props.page === "2") {
 			return <Text>Passwords Page</Text>;
-		} else {
-			return _pageQR(
-				this.state.hasCameraPermission,
-				this._handleBarCodeRead.bind(),
-			);
 		}
-	}
-
-	_handleBarCodeRead = ({ type, data }) => {
-		bytes = Buffer.from(data, "base64");
-		if (bytes.length != 128) return;
-
-		ed = bytes.slice(0, 32);
-		curve = bytes.slice(32, 64);
-
-		verify = nacl.sign.detached.verify(
-			bytes.slice(0, 64),
-			bytes.slice(64),
-			ed,
-		);
-
-		if (!verify) return;
-
-		// Generate keypair, add it to keepass database and send public keys to server
-
-		this.props.changeTab(1);
-	};
-}
-
-function _pageQR(perm, callback) {
-	if (perm === null) {
-		return <Text>Requesting for camera permission</Text>;
-	} else if (perm === false) {
-		return <Text>No access to camera</Text>;
-	} else {
-		return (
-			<BarCodeScanner
-				onBarCodeRead={callback}
-				style={StyleSheet.absoluteFill}
-			/>
-		);
 	}
 }

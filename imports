@@ -1,0 +1,47 @@
+package libpass
+
+import (
+	"crypto/rand"
+
+	"golang.org/x/crypto/curve25519"
+	"golang.org/x/crypto/nacl/box"
+	"golang.org/x/crypto/nacl/sign"
+)
+
+type Keys struct {
+	SignPriv *[64]byte
+	SignPub  *[32]byte
+	BoxPriv  *[32]byte
+	BoxPub   *[32]byte
+}
+
+func (k *Keys) Generate() (err error) {
+	if k == nil {
+		return
+	}
+
+	if k.SignPriv == nil {
+		k.SignPub, k.SignPriv, err = sign.GenerateKey(rand.Reader)
+		if err != nil {
+			return
+		}
+	}
+
+	if k.SignPub == nil {
+		k.SignPub = new([32]byte)
+		copy((*k.SignPub)[:], (*k.SignPriv)[32:])
+	}
+
+	if k.BoxPriv == nil {
+		k.BoxPub, k.BoxPriv, err = box.GenerateKey(rand.Reader)
+		if err != nil {
+			return
+		}
+	}
+
+	if k.BoxPub == nil {
+		curve25519.ScalarBaseMult(k.BoxPub, k.BoxPriv)
+	}
+
+	return nil
+}

@@ -16,13 +16,14 @@ export default class Main extends React.Component {
 	render() {
 		return (
 			<View style={styles.container}>
+
 				<Tabs
 					selected={this.state.page}
 					onSelect={this._onTabSelect}
 					style={{ backgroundColor: "white" }}
 					selectedStyle={{ color: "red" }} >
 
-					<Text name="0">Scan</Text>
+					{/*<Text name="0">Scan</Text>*/}
 					<Text name="1">Devices</Text>
 					<Text name="2">Passwords</Text>
 				</Tabs>

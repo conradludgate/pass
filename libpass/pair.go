@@ -12,28 +12,54 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/mdp/qrterminal"
-	"golang.org/x/crypto/nacl/sign"
 )
 
-var DefaultServer *url.URL = &url.URL{
-	Scheme:   "https",
-	Host:     "pass.conradludgate.com",
-	RawQuery: "timeout=60",
-} // Default
+// var DefaultServer *url.URL = &url.URL{
+// 	Scheme: "https",
+// 	Host:   "pass.conradludgate.com",
+// 	//RawQuery: "timeout=60",
+// } // Default
 
-func Pair(kf KeyFile, pass_server url.URL) (err error) {
-	k := kf.Client
+var DefaultServer string = "https://pass.conradludgate.com/"
+
+func Pair(kf *KeyFile, server string, dur int, force bool) (err error) {
+	if kf.Phone.SignPub != Zeros {
+		if force {
+			fmt.Println("Warning, this client is already paired to a device")
+			fmt.Println("This will overwrite your currently paired device")
+		} else {
+			return errors.New(`Client is already paired.
+If you want to ignore this error, supply the '--force' flag`)
+		}
+	}
 
 	// Encode public keys
 	b := make([]byte, 64)
-	copy(b, (*k.SignPub)[:])
-	copy(b[32:], (*k.BoxPub)[:])
+	copy(b, kf.Client.SignPub[:])
+	copy(b[32:], kf.Client.BoxPub[:])
 
-	b = sign.Sign(nil, b, k.SignPriv)
+	b = kf.Sign(b)
 
-	// Websocket Scheme
+	// Parse URL
+	pass_server, err := url.Parse(server)
+	if err != nil {
+		return err
+	}
+
 	pass_server.Scheme = strings.Replace(pass_server.Scheme, "http", "ws", 1)
 	pass_server.Path += "wait"
+
+	if dur <= 0 {
+		dur = 60
+	}
+	if dur > 60 {
+		dur = 60
+	}
+
+	v := url.Values{}
+	v.Set("timeout", strconv.Itoa(dur))
+
+	pass_server.RawQuery = v.Encode()
 
 	// Start websocket connection
 	conn, _, err := websocket.DefaultDialer.Dial(pass_server.String(), nil)
@@ -51,14 +77,8 @@ func Pair(kf KeyFile, pass_server url.URL) (err error) {
 	data := base64.RawStdEncoding.EncodeToString(b)
 
 	// Display QR Code
-	fmt.Println("Scan this QR code on the Pass app to start the pairing process")
+	fmt.Println("On the devices page of the Pass app, tap the plus icon and scan the following QR code")
 	qrterminal.GenerateHalfBlock(data, qrterminal.L, os.Stdout)
-
-	// Timeout
-	dur, _ := strconv.Atoi(pass_server.Query().Get("timeout"))
-	if dur <= 0 {
-		dur = 60
-	}
 
 	timeout := time.After(time.Second * time.Duration(dur))
 
@@ -77,26 +97,35 @@ func Pair(kf KeyFile, pass_server url.URL) (err error) {
 		}
 	}
 
-	// Bad key exchange. Compromised server?
-	if len(body) != 196 {
+	/*
+		body := struct {
+			Checksum           [64]byte // body[0:64]
+			kf.Client.SignPub [32]byte // body[64:96]
+			kf.Client.BoxPub  [32]byte // body[96:128]
+			kf.Phone.SignPub  [32]byte // body[128:160]
+			kf.Phone.BoxPub   [32]byte // body[160:192]
+		}
+	*/
+
+	if len(body) != 192 {
 		return errors.New(string(body))
 	}
 
-	// body[:64] != b[:64]
-	for i, v := range body[:64] {
-		if b[i] != v {
+	// body[64:128] != b[64:128]
+	for i, v := range body[64:128] {
+		if b[64+i] != v {
 			return errors.New("Something went wrong. Try using a different server")
 		}
 	}
 
 	// Verify and save phone's keys
-	phone := kf.Phone
-	copy((*phone.SignPub)[:], body[64:])
-	copy((*phone.BoxPub)[:], body[96:])
+	copy(kf.Phone.SignPub[:], body[128:])
 
-	if _, verify := sign.Open(nil, body, phone.SignPub); !verify {
+	if _, ok := kf.Open(body); !ok {
 		return errors.New("Cannot verify keys from phone. Try again")
 	}
+
+	copy(kf.Phone.BoxPub[:], body[160:])
 
 	// Write public keys to file
 	err = kf.Save()

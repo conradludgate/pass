@@ -1,9 +1,18 @@
 {
-	"expo": {
-		"name": "Pass",
-		"description": "A phone based password manager and authenticator",
-		"slug": "passapp",
-		"sdkVersion": "27.0.0",
-		"githubUrl": "https://github.com/conradludgate/pass"
-	}
+  "expo": {
+    "name": "Pass",
+    "description": "A phone based password manager and authenticator",
+    "slug": "passapp",
+    "sdkVersion": "27.0.0",
+    "githubUrl": "https://github.com/conradludgate/pass",
+    "android": {
+      "package": "com.conradludgate.pass"
+    },
+    "version": "0.1.0",
+    "isDetached": true,
+    "detach": {
+      "scheme": "exp2000618bc38a4fca8b1e098796011e61",
+      "androidExpoViewUrl": "https://s3.amazonaws.com/exp-exponent-view-code/android-v2.5.3-sdk27.0.0-408c8d77-8d1f-4784-b7b4-93826250663a.tar.gz"
+    }
+  }
 }
